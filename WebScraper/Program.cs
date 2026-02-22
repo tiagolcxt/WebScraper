@@ -1,87 +1,99 @@
 ﻿using WebScraper.Models;
 using WebScraper.Services;
 using WebScraper.Interfaces;
+using System;
+using System.Collections.Generic;
 using System.Linq;
 
+/* * ============================================================================
+ * TUTORIAL DE CONFIGURAÇÃO DE PESQUISA (LOGICA BOOLEANA 2026)
+ * ============================================================================
+ * * 1. OPERADORES DISPONÍVEIS:
+ * && (AND) -> OBRIGA que ambos os termos estejam presentes.
+ * || (OR)  -> Aceita QUALQUER um dos termos.
+ * !  (NOT) -> EXCLUI resultados que contenham este termo.
+ * * 2. ASPAS DUPLAS (""):
+ * Sempre use aspas para termos compostos (ex: "Hericium erinaceus").
+ * * 3. REGRAS DE OURO:
+ * - O sistema valida no resumo se as Keywords da fórmula realmente existem.
+ * - Artigos que não citam o cogumelo e o tema são descartados pelo Validator.
+ * ============================================================================
+ */
+
 // --- CONFIGURAÇÃO ---
-var meusCogumelos = new List<string> { "Lion's Mane", "Reishi", "Cordyceps" };
+var minhasPesquisas = new List<string>
+{
+    "\"Hericium erinaceus\" && \"alcoholic extraction\"",
+    "\"Ganoderma lucidum\" && (\"anti-tumor\" || \"cancer\")",
+    "\"Lentinula edodes\" && !\"water extraction\""
+};
+
 var dataInicio = new DateTime(2023, 01, 01);
 var tipoFonte = SourceType.ScientificArticle;
 
-// --- INSTANCIAÇÃO ---
+// --- INSTANCIAÇÃO DOS SERVIÇOS ---
 IIdentityService identity = new IdentityService();
+QueryService queryService = new QueryService();
+IResearchValidator validador = new PubMedValidator(); // Já integra a lógica de keywords
 ISearchNavigator navegador = new PubMedNavigator(identity);
 IResearchParser extrator = new PubMedParser(identity);
-IResearchValidator validador = new PubMedValidator();
+
 var maestro = new ScraperOrchestrator(navegador, extrator, validador);
+var exportador = new DataExporter("Minhas_Pesquisas_2026");
 
 Console.Clear();
 Console.WriteLine("============================================================");
 Console.WriteLine("      SISTEMA DE EXTRAÇÃO SEGMENTADA - PUBMED 2026");
+Console.WriteLine("      CONTROLE DE ACURÁCIA E EXPORTAÇÃO EXCEL");
 Console.WriteLine("============================================================\n");
 
-// --- EXECUÇÃO ---
-var (dadosExtraidos, tempoGeral) = await maestro.RunScrapeAsync(meusCogumelos, dataInicio, null, tipoFonte);
+// --- EXECUÇÃO DO SCRAPE ---
+var (dadosExtraidos, tempoGeral) = await maestro.RunScrapeAsync(minhasPesquisas, dataInicio, null, tipoFonte);
 
-// --- RELATÓRIO DETALHADO POR BLOCO DE BUSCA ---
-Console.WriteLine("\n" + new string('=', 60));
-Console.WriteLine("             RESULTADOS POR CATEGORIA DE BUSCA");
-Console.WriteLine(new string('=', 60));
-
-// Agrupa os resultados pelo primeiro cogumelo da lista (o termo que gerou a busca)
-var gruposPorCogumelo = dadosExtraidos
-    .SelectMany(r => r.Mushrooms, (research, mushroom) => new { research, mushroom })
-    .GroupBy(x => x.mushroom);
-
-foreach (var grupo in gruposPorCogumelo)
+if (!dadosExtraidos.Any())
 {
-    Console.ForegroundColor = ConsoleColor.Cyan;
-    Console.WriteLine($"\n[CATEGORIA: {grupo.Key.ToUpper()}]");
+    Console.ForegroundColor = ConsoleColor.Red;
+    Console.WriteLine("\n[AVISO] Nenhum artigo válido foi encontrado para os critérios informados.");
     Console.ResetColor();
-    Console.WriteLine($"Itens encontrados: {grupo.Count()}");
-    Console.WriteLine(new string('-', 30));
-
-    foreach (var item in grupo)
-    {
-        var r = item.research;
-        Console.ForegroundColor = ConsoleColor.White;
-        Console.WriteLine($" ► {r.Title}");
-        Console.ResetColor();
-
-        Console.WriteLine($"   Autor: {r.Author}"); // Agora vai aparecer!
-        Console.WriteLine($"   Data:  {r.PublicationDate.ToShortDateString()}");
-        Console.WriteLine($"   Link:  {r.Link}");
-
-        // Mostra apenas os primeiros 150 caracteres do abstract
-        string resumoResumido = r.Abstract.Length > 150
-            ? r.Abstract.Substring(0, 150) + "..."
-            : r.Abstract;
-
-        Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine($"   Resumo: {resumoResumido}");
-        Console.ResetColor();
-        Console.WriteLine();
-    }
+    return;
 }
 
-// --- DASHBOARD COMPARATIVO FINAL ---
-double tempoEstimadoSegundos = tempoGeral.TotalSeconds * 1.15;
-double economiaTempo = tempoEstimadoSegundos - tempoGeral.TotalSeconds;
-
+// --- RELATÓRIO VISUAL E ORGANIZAÇÃO ---
 Console.WriteLine("\n" + new string('=', 60));
-Console.WriteLine("             ANÁLISE DE PERFORMANCE GLOBAL");
+Console.WriteLine("             PROCESSANDO RESULTADOS POR CATEGORIA");
 Console.WriteLine(new string('=', 60));
 
-Console.WriteLine($"{"MÉTRICA",-28} | {"VALOR OBTIDO",-15}");
-Console.WriteLine(new string('-', 60));
-Console.WriteLine($"{"Total Geral Validados",-28} | {dadosExtraidos.Count}");
-Console.WriteLine($"{"Tempo Real",-28} | {tempoGeral.Minutes}m {tempoGeral.Seconds}s");
-Console.WriteLine($"{"Tempo Estimado (Pessimista)",-28} | {TimeSpan.FromSeconds(tempoEstimadoSegundos).Minutes}m {TimeSpan.FromSeconds(tempoEstimadoSegundos).Seconds}s");
+var grupos = dadosExtraidos
+    .SelectMany(r => r.Mushrooms, (research, formula) => new { research, formula })
+    .GroupBy(x => x.formula);
+
+foreach (var grupo in grupos)
+{
+    Console.ForegroundColor = ConsoleColor.Cyan;
+    Console.WriteLine($"\n[FÓRMULA: {grupo.Key.ToUpper()}]");
+    Console.ResetColor();
+    Console.WriteLine($"Encontrados: {grupo.Count()} artigos válidos.");
+
+    // Exportação Individual por Fórmula
+    var listaItensGrupo = grupo.Select(g => g.research).ToList();
+    exportador.ExportToExcel(listaItensGrupo, $"Busca_{grupo.Key}");
+}
+
+// --- EXPORTAÇÃO FINAL CONSOLIDADA ---
+// Gera um arquivo único com todos os resultados de todas as pesquisas
+exportador.ExportToExcel(dadosExtraidos, "Busca_Integrada_Cogumelos_Full");
+
+// --- DASHBOARD FINAL ---
+Console.WriteLine("\n" + new string('=', 60));
+Console.WriteLine("               RESUMO DA OPERAÇÃO");
+Console.WriteLine(new string('=', 60));
+Console.WriteLine($"{"Total de Artigos Válidos",-28} | {dadosExtraidos.Count}");
+Console.WriteLine($"{"Tempo Total Decorrido",-28} | {tempoGeral.Minutes}m {tempoGeral.Seconds}s");
+Console.WriteLine($"{"Pasta de Destino",-28} | /Minhas_Pesquisas_2026/");
+Console.WriteLine(new string('=', 60));
 
 Console.ForegroundColor = ConsoleColor.Green;
-Console.WriteLine($"{"Eficiência de Tempo",-28} | {((economiaTempo / (tempoEstimadoSegundos == 0 ? 1 : tempoEstimadoSegundos)) * 100):F1}% mais rápido");
+Console.WriteLine("\n[SUCESSO] Todos os arquivos Excel foram gerados e validados.");
 Console.ResetColor();
-
-Console.WriteLine(new string('=', 60));
-Console.WriteLine("\nPressione qualquer tecla para sair...");
+Console.WriteLine("Pressione qualquer tecla para fechar o sistema...");
 Console.ReadKey();
